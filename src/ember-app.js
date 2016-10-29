@@ -176,6 +176,24 @@ class EmberApp {
     });
   }
 
+  destroyAppInstance(instance, result, timeout) {
+    //let isInstanceDestroyed = false;
+
+    if (!timeout) return () => instance.destroy();
+
+    // start a timer to destroy the appInstance forcefully in the given ms.
+    // This is a failure mechanism so that node process doesn't get wedged if the `visit` never completes.
+    const destructionTimer = setTimeout(function() {
+      instance.destroy();
+      result.error = new Error(`App instance was forcefully destroyed in ${timeout}ms`);
+    }, timeout);
+
+    return function() {
+      clearTimeout(destructionTimer);
+      instance.destroy();
+    };
+  }
+
   /**
    * Creates a new application instance and renders the instance at a specific
    * URL, returning a promise that resolves to a {@link Result}. The `Result`
@@ -203,7 +221,7 @@ class EmberApp {
     let res = options.response;
     let html = options.html || this.html;
     let disableShoebox = options.disableShoebox || false;
-    let destroyAppInstanceInMs = options.destroyAppInstanceInMs;
+    let destroyAppInstanceInMs = parseInt(options.destroyAppInstanceInMs, 10);
 
     let shouldRender = (options.shouldRender !== undefined) ? options.shouldRender : true;
     let bootOptions = buildBootOptions(shouldRender);
@@ -223,23 +241,12 @@ class EmberApp {
       fastbootInfo: fastbootInfo
     });
 
-    let destroyAppInstanceTimer;
-    if (parseInt(destroyAppInstanceInMs, 10) > 0) {
-      // start a timer to destroy the appInstance forcefully in the given ms.
-      // This is a failure mechanism so that node process doesn't get wedged if the `visit` never completes.
-      destroyAppInstanceTimer = setTimeout(function() {
-        if (instance && !result.instanceDestroyed) {
-          result.instanceDestroyed = true;
-          result.error = new Error('App instance was forcefully destroyed in ' + destroyAppInstanceInMs + 'ms');
-          instance.destroy();
-        }
-      }, destroyAppInstanceInMs);
-    }
 
     return this.buildAppInstance()
       .then(appInstance => {
         instance = appInstance;
         result.instance = instance;
+        result.destroyInstance = this.destroyAppInstance(instance, result, destroyAppInstanceInMs);
         registerFastBootInfo(fastbootInfo, instance);
 
         return instance.boot(bootOptions);
@@ -255,16 +262,7 @@ class EmberApp {
       })
       .catch(error => result.error = error)
       .then(() => result._finalize())
-      .finally(() => {
-        if (instance && !result.instanceDestroyed) {
-          result.instanceDestroyed = true;
-          instance.destroy();
-
-          if (destroyAppInstanceTimer) {
-            clearTimeout(destroyAppInstanceTimer);
-          }
-        }
-      });
+      .finally(() => result.destroyInstance());
   }
 
   /**
